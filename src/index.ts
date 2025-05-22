@@ -56,7 +56,10 @@ wss.on("connection", (socket : WebSocket) => {
             
             for(const peer of room!){
                 if(peer != socket && peer.readyState === WebSocket.OPEN){
-                    peer.send(parsedMessage.payload.message);
+                    peer.send(JSON.stringify({
+                        type: 'chat',
+                        payload: { message: parsedMessage.payload.message }
+                    }));
                 }
             }
         }

@@ -45,7 +45,10 @@ wss.on("connection", (socket) => {
             const room = rooms.get(roomId);
             for (const peer of room) {
                 if (peer != socket && peer.readyState === ws_1.WebSocket.OPEN) {
-                    peer.send(parsedMessage.payload.message);
+                    peer.send(JSON.stringify({
+                        type: 'chat',
+                        payload: { message: parsedMessage.payload.message }
+                    }));
                 }
             }
         }
