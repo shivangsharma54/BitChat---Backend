@@ -1,8 +1,14 @@
 import { WebSocketServer , WebSocket } from "ws";
 import http from "http";
 import express from "express";
+import type { Request, Response } from 'express';
 
 const app = express();
+
+app.get('/ping', (req: Request, res: Response) => {
+  res.send('pong');
+});
+
 const server = http.createServer(app);
 
 const wss = new WebSocketServer({noServer: true});
