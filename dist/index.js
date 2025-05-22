@@ -1,8 +1,14 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const ws_1 = require("ws");
-const port = Number(process.env.PORT) || 8080;
-const wss = new ws_1.WebSocketServer({ port });
+const http_1 = __importDefault(require("http"));
+const express_1 = __importDefault(require("express"));
+const app = (0, express_1.default)();
+const server = http_1.default.createServer(app);
+const wss = new ws_1.WebSocketServer({ noServer: true });
 const rooms = new Map();
 const socketToRoom = new Map();
 wss.on("connection", (socket) => {
@@ -64,4 +70,13 @@ wss.on("connection", (socket) => {
             socketToRoom.delete(socket);
         }
     });
+});
+server.on('upgrade', (request, socket, head) => {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+    });
+});
+const PORT = Number(process.env.PORT) || 8080;
+server.listen(PORT, () => {
+    console.log(`HTTP+WS server listening on port ${PORT}`);
 });

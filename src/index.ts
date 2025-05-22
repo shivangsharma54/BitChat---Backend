@@ -1,7 +1,11 @@
 import { WebSocketServer , WebSocket } from "ws";
+import http from "http";
+import express from "express";
 
-const port = Number(process.env.PORT) || 8080;
-const wss = new WebSocketServer({port});
+const app = express();
+const server = http.createServer(app);
+
+const wss = new WebSocketServer({noServer: true});
 
 const rooms = new Map<string,Set<WebSocket>>();
 const socketToRoom = new Map<WebSocket,string>();
@@ -77,3 +81,15 @@ wss.on("connection", (socket : WebSocket) => {
         }
     })
 })
+
+ 
+server.on('upgrade', (request, socket, head) => { 
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
+
+const PORT = Number(process.env.PORT) || 8080;
+server.listen(PORT, () => {
+  console.log(`HTTP+WS server listening on port ${PORT}`);
+});
