@@ -7,73 +7,149 @@ const ws_1 = require("ws");
 const http_1 = __importDefault(require("http"));
 const express_1 = __importDefault(require("express"));
 const app = (0, express_1.default)();
+// uptime api call to keep server alive
 app.get('/ping', (req, res) => {
     res.send('pong');
 });
 const server = http_1.default.createServer(app);
 const wss = new ws_1.WebSocketServer({ noServer: true });
+// in-memory storage
 const rooms = new Map();
 const socketToRoom = new Map();
+const socketToUsername = new Map();
+const roomToMessages = new Map();
+const roomToUsers = new Map();
 wss.on("connection", (socket) => {
     socket.on("message", (message) => {
-        // message is an object :
-        /*
-            {
-                "type": "join",
-                "payload": {
-                    "roomId": "123"
-                }
-            }
-        */
-        /*
-            {
-                "type": "chat",
-                "payload": {
-                    "message: "hi there"
-                }
-            }
-        */
-        const parsedMessage = JSON.parse(message);
-        if (parsedMessage.type === "join") {
-            const roomId = parsedMessage.payload.roomId;
-            let room = rooms.get(roomId); // get the set of WebSockets for the given room
-            if (!room) { // if there is no room for the given roomId , create a new one
+        const parsed = JSON.parse(message);
+        // joining shit
+        if (parsed.type === "join") {
+            const { roomId, username } = parsed.payload;
+            // set username and roomId to socket
+            let room = rooms.get(roomId);
+            if (!room) {
                 room = new Set();
                 rooms.set(roomId, room);
             }
             room.add(socket);
             socketToRoom.set(socket, roomId);
-            socket.send(JSON.stringify({ type: 'joined', payload: { roomId } }));
-        }
-        if (parsedMessage.type === "chat") {
-            // i got the socket but i need to get the roomId
-            const roomId = socketToRoom.get(socket);
-            if (!roomId) {
-                return;
-            }
-            const room = rooms.get(roomId);
+            socketToUsername.set(socket, username);
+            // username set
+            const users = roomToUsers.get(roomId) || new Set();
+            users.add(username);
+            roomToUsers.set(roomId, users);
             for (const peer of room) {
-                if (peer != socket && peer.readyState === ws_1.WebSocket.OPEN) {
-                    peer.send(JSON.stringify({
-                        type: 'chat',
-                        payload: { message: parsedMessage.payload.message }
-                    }));
+                if (peer.readyState !== ws_1.WebSocket.OPEN)
+                    continue;
+                if (peer !== socket) {
+                    peer.send(JSON.stringify({ type: 'joined', payload: { roomId, username } }));
+                }
+                else {
+                    peer.send(JSON.stringify({ type: 'self-joined', payload: { roomId, username } }));
+                }
+            }
+            const usersArray = Array.from(roomToUsers.get(roomId));
+            for (const peer of room) {
+                if (peer.readyState === ws_1.WebSocket.OPEN) {
+                    peer.send(JSON.stringify({ type: 'users', payload: { users: usersArray } }));
+                }
+            }
+            const messages = roomToMessages.get(roomId) || [];
+            socket.send(JSON.stringify({ type: 'chat-history', payload: { messages } }));
+        }
+        // exit request
+        if (parsed.type === "exit") {
+            const roomId = socketToRoom.get(socket);
+            const username = socketToUsername.get(socket);
+            if (!roomId || !username)
+                return;
+            const room = rooms.get(roomId);
+            if (!room)
+                return;
+            // remove socket and mappings
+            room.delete(socket);
+            socketToRoom.delete(socket);
+            socketToUsername.delete(socket);
+            // remove from user set
+            const users = roomToUsers.get(roomId);
+            if (users) {
+                users.delete(username);
+                roomToUsers.set(roomId, users);
+                for (const peer of room) {
+                    if (peer.readyState !== ws_1.WebSocket.OPEN)
+                        continue;
+                    peer.send(JSON.stringify({ type: 'left', payload: { roomId, username } }));
+                }
+                const usersArray = Array.from(users);
+                for (const peer of room) {
+                    if (peer.readyState === ws_1.WebSocket.OPEN) {
+                        peer.send(JSON.stringify({ type: 'users', payload: { users: usersArray } }));
+                    }
+                }
+            }
+            // cleanup empty rooms
+            if (room.size === 0) {
+                rooms.delete(roomId);
+                roomToMessages.delete(roomId);
+                roomToUsers.delete(roomId);
+            }
+        }
+        // chat message
+        if (parsed.type === "chat") {
+            const roomId = socketToRoom.get(socket);
+            const username = socketToUsername.get(socket);
+            if (!roomId || !username)
+                return;
+            const room = rooms.get(roomId);
+            if (!room)
+                return;
+            // append to history
+            const history = roomToMessages.get(roomId) || [];
+            const newMsg = { from: username, message: parsed.payload.message };
+            history.push(newMsg);
+            roomToMessages.set(roomId, history);
+            // broadcast new chat
+            for (const peer of room) {
+                if (peer !== socket && peer.readyState === ws_1.WebSocket.OPEN) {
+                    peer.send(JSON.stringify({ type: 'chat-new', payload: { from: username, message: parsed.payload.message } }));
                 }
             }
         }
     });
+    // on close event
     socket.on("close", () => {
         const roomId = socketToRoom.get(socket);
-        if (roomId) {
+        const username = socketToUsername.get(socket);
+        if (roomId && username) {
             const room = rooms.get(roomId);
+            // remove socket
             room === null || room === void 0 ? void 0 : room.delete(socket);
+            socketToRoom.delete(socket);
+            socketToUsername.delete(socket);
+            // remove user and broadcast updated list
+            const users = roomToUsers.get(roomId);
+            if (users) {
+                users.delete(username);
+                roomToUsers.set(roomId, users);
+                if (room) {
+                    const updated = Array.from(users);
+                    for (const peer of room) {
+                        if (peer.readyState === ws_1.WebSocket.OPEN) {
+                            peer.send(JSON.stringify({ type: 'users', payload: { users: updated } }));
+                        }
+                    }
+                }
+            }
+            // cleanup empty rooms
             if ((room === null || room === void 0 ? void 0 : room.size) === 0) {
                 rooms.delete(roomId);
+                roomToMessages.delete(roomId);
+                roomToUsers.delete(roomId);
             }
-            socketToRoom.delete(socket);
         }
     });
 });
+// upgrade HTTP to WS
 server.on('upgrade', (request, socket, head) => {
     wss.handleUpgrade(request, socket, head, (ws) => {
         wss.emit('connection', ws, request);
